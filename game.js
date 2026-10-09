@@ -162,21 +162,17 @@ function vibrate(ms){
   if(navigator.vibrate){ try{ navigator.vibrate(ms); }catch(e){} }
 }
 
-/* ═══════════ РАЗМЕРЫ ═══════════
-   #app всегда с aspect ratio 480:800,
-   вписан в экран с сохранением пропорций */
+/* ═══════════ РАЗМЕРЫ ═══════════ */
 function onResize(){
   var vw = window.innerWidth;
   var vh = window.innerHeight;
-  var targetAspect = VIRTUAL_W / VIRTUAL_H; // 0.6
+  var targetAspect = VIRTUAL_W / VIRTUAL_H;
 
   var appW, appH;
   if(vw / vh > targetAspect){
-    // Экран шире — вписываем по высоте
     appH = vh;
     appW = appH * targetAspect;
   } else {
-    // Экран уже — вписываем по ширине
     appW = vw;
     appH = appW / targetAspect;
   }
@@ -185,20 +181,19 @@ function onResize(){
   app.style.width = appW + "px";
   app.style.height = appH + "px";
 
-  // canvas — растягиваем на всю #app, но с учётом dpr для чёткости
-  var dpr = Math.min(window.devicePixelRatio || 1, 2);
-  G.dpr = dpr;
   G.w = appW;
   G.h = appH;
-  G.scale = appW / VIRTUAL_W;  // масштаб от виртуального к реальному
+  G.scale = appW / VIRTUAL_W;
 
-  cv.width = Math.round(VIRTUAL_W * dpr * 2);  // фиксированный буфер
-  cv.height = Math.round(VIRTUAL_H * dpr * 2);
-  cv.style.width = "100%";
+  /* ⚡ ОПТИМИЗАЦИЯ: буфер canvas = чистые виртуальные размеры
+     Было: VIRTUAL × dpr × 2 = 1920×3200 (6 млн пикселей)
+     Стало: VIRTUAL = 480×800 (384 тыс пикселей) — в 15 раз меньше */
+  cv.width  = VIRTUAL_W;
+  cv.height = VIRTUAL_H;
+  cv.style.width  = "100%";
   cv.style.height = "100%";
 
-  // Рисуем в фиксированных координатах 480×800, ctx сам масштабирует
-  ctx.setTransform(cv.width / VIRTUAL_W, 0, 0, cv.height / VIRTUAL_H, 0, 0);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
 /* ═══════════ ЭКРАНЫ ═══════════ */
@@ -328,7 +323,6 @@ function startGame(){
   G.shakeTime = 0; G.flashTimer = 0;
   G.touchX = null;
 
-  // Игрок стартует по центру
   G.player.x = VIRTUAL_W / 2;
   G.player.y = VIRTUAL_H * 0.65;
   G.player.vx = 0;
@@ -336,10 +330,8 @@ function startGame(){
   G.player.onGround = true;
   G.player.anim = 0;
 
-  // Камера привязана так, чтобы игрок был на 55% экрана
   G.camY = G.player.y - VIRTUAL_H * 0.55;
 
-  // Первая платформа прямо под игроком
   G.lastPlatformY = G.player.y + 40;
   G.platforms.push({
     x: G.player.x - PLATFORM_W / 2,
@@ -347,7 +339,6 @@ function startGame(){
     type: "normal", vx: 0, broken: false, used: false
   });
 
-  // Спавним платформы выше
   for(var i=0;i<18;i++) spawnPlatform();
   updateMenuStats();
 }
@@ -366,7 +357,6 @@ function spawnPlatform(){
 
   if(type === "moving") vx = (Math.random() < 0.5 ? -1 : 1) * rand(40, 70);
 
-  // x всегда внутри VIRTUAL_W
   var x = rand(20, VIRTUAL_W - PLATFORM_W - 20);
 
   G.platforms.push({
@@ -393,25 +383,21 @@ function updatePlayer(dt){
   p.vx = clamp(p.vx, -520, 520);
   p.x += p.vx * dt;
 
-  // Wrap по краям
   if(p.x < -PLAYER_W/2) p.x = VIRTUAL_W + PLAYER_W/2;
   if(p.x > VIRTUAL_W + PLAYER_W/2) p.x = -PLAYER_W/2;
 
   p.anim += dt * 2;
 
-  // Гравитация
   p.vy += GRAVITY * dt;
   if(p.vy > 2200) p.vy = 2200;
   p.y += p.vy * dt;
 
-  // Коллизия с платформами — только когда падаем
   if(p.vy >= 0){
     for(var i=0;i<G.platforms.length;i++){
       var pl = G.platforms[i];
       if(pl.broken) continue;
       var plTop = pl.y;
       var pBottom = p.y + PLAYER_H;
-      // Игрок сверху — проверяем пересечение по X
       if(p.x + 12 > pl.x && p.x - 12 < pl.x + PLATFORM_W){
         if(pBottom >= plTop && pBottom <= plTop + 30){
           p.y = plTop - PLAYER_H;
@@ -421,7 +407,6 @@ function updatePlayer(dt){
           if(pl.type === "once") pl.broken = true;
           playJump();
           vibrate(15);
-          // Пыль
           if(G.particlesOn){
             for(var k=0;k<4;k++){
               G.particles.push({
@@ -438,15 +423,12 @@ function updatePlayer(dt){
     }
   }
 
-  // Падение
   if(p.y > G.camY + VIRTUAL_H + 40){ die(); return; }
 
-  // Счёт
   var height = Math.max(0, (VIRTUAL_H * 0.65) - p.y);
   var newScore = Math.floor(height / 10);
   if(newScore > G.score) G.score = newScore;
 
-  // Трейл
   if(G.particlesOn && Math.random() < 0.5){
     G.trail.push({ x: p.x + rand(-4,4), y: p.y + PLAYER_H/2, life: 0.4, maxLife: 0.4 });
   }
@@ -457,11 +439,9 @@ function updatePlayer(dt){
 }
 
 function updateWorld(dt){
-  // Камера едет вверх за игроком
   var camTarget = G.player.y - VIRTUAL_H * 0.55;
   if(camTarget < G.camY) G.camY = lerp(G.camY, camTarget, dt * 6);
 
-  // Движущиеся платформы
   for(var i=0;i<G.platforms.length;i++){
     var pl = G.platforms[i];
     if(pl.type === "moving"){
@@ -471,10 +451,8 @@ function updateWorld(dt){
     }
   }
 
-  // Спавним новые вверху
   while(G.lastPlatformY > G.camY - 200) spawnPlatform();
 
-  // Чистим внизу
   var behindY = G.camY + VIRTUAL_H + 200;
   for(var i=G.platforms.length-1;i>=0;i--) if(G.platforms[i].y > behindY) G.platforms.splice(i,1);
 }
@@ -510,7 +488,11 @@ function die(){
   }, 700);
 }
 
-/* ═══════════ РЕНДЕР (в фиксированных координатах 480×800) ═══════════ */
+/* ═══════════ РЕНДЕР ═══════════ */
+/* ⚡ ОПТИМИЗАЦИЯ: градиенты фона и солнца кэшируются один раз */
+var bgGradCache = null;
+var sunCache = null;
+
 function render(){
   var w = VIRTUAL_W, h = VIRTUAL_H;
   var shakeX = 0, shakeY = 0;
@@ -519,51 +501,58 @@ function render(){
     shakeY = rand(-G.shakeInt, G.shakeInt) / 4;
   }
 
-  // Фон
-  var grad = ctx.createLinearGradient(0,0,0,h);
-  grad.addColorStop(0, "#1a0520");
-  grad.addColorStop(0.4, "#4d0a15");
-  grad.addColorStop(0.75, "#a8300a");
-  grad.addColorStop(1, "#ff6600");
-  ctx.fillStyle = grad;
+  /* Фон — кэшированный градиент */
+  if(!bgGradCache){
+    bgGradCache = ctx.createLinearGradient(0,0,0,h);
+    bgGradCache.addColorStop(0, "#1a0520");
+    bgGradCache.addColorStop(0.4, "#4d0a15");
+    bgGradCache.addColorStop(0.75, "#a8300a");
+    bgGradCache.addColorStop(1, "#ff6600");
+  }
+  ctx.fillStyle = bgGradCache;
   ctx.fillRect(0,0,w,h);
 
-  // Солнце
+  /* Солнце — кэшированный градиент */
   if(G.parallaxOn){
-    var sunX = w * 0.72, sunY = h * 0.68, sunR = 60;
-    var sg = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, sunR * 5);
-    sg.addColorStop(0, "rgba(255,220,80,0.6)");
-    sg.addColorStop(0.3, "rgba(255,150,30,0.3)");
-    sg.addColorStop(1, "rgba(255,80,0,0)");
-    ctx.fillStyle = sg;
+    if(!sunCache){
+      sunCache = ctx.createRadialGradient(
+        w*0.72, h*0.68, 0,
+        w*0.72, h*0.68, 300
+      );
+      sunCache.addColorStop(0, "rgba(255,220,80,0.6)");
+      sunCache.addColorStop(0.3, "rgba(255,150,30,0.3)");
+      sunCache.addColorStop(1, "rgba(255,80,0,0)");
+    }
+    ctx.fillStyle = sunCache;
     ctx.fillRect(0,0,w,h);
     ctx.fillStyle = "#ffdd55";
-    ctx.beginPath(); ctx.arc(sunX, sunY, sunR, 0, 6.283); ctx.fill();
+    ctx.beginPath();
+    ctx.arc(w*0.72, h*0.68, 60, 0, 6.283);
+    ctx.fill();
   }
 
-  // Смещение только по Y (камеры) + shake
   var camY = G.camY;
   ctx.save();
   ctx.translate(shakeX, -camY + shakeY);
 
-  // Платформы
+  /* ⚡ ОПТИМИЗАЦИЯ: убран shadowBlur — вместо него цветная рамка */
   for(var i=0;i<G.platforms.length;i++){
     var pl = G.platforms[i];
     if(pl.broken) continue;
     var py = pl.y;
     if(py < camY - 60 || py > camY + VIRTUAL_H + 60) continue;
     var color = pl.type === "moving" ? "#ff00e5" : pl.type === "fragile" ? "#ffe56b" : pl.type === "once" ? "#ffffff" : "#00e5ff";
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 16;
+    // Тёмная рамка вокруг платформы
+    ctx.fillStyle = "rgba(0,0,0,0.4)";
+    ctx.fillRect(pl.x - 2, pl.y - 2, PLATFORM_W + 4, PLATFORM_H + 4);
+    // Основная заливка
     ctx.fillStyle = color;
     ctx.fillRect(pl.x, pl.y, PLATFORM_W, PLATFORM_H);
     // Яркая верхняя грань
-    ctx.shadowBlur = 0;
     ctx.fillStyle = "rgba(255,255,255,0.55)";
     ctx.fillRect(pl.x + 3, pl.y + 2, PLATFORM_W - 6, 2);
   }
 
-  // Трейл игрока
   for(var i=0;i<G.trail.length;i++){
     var tr = G.trail[i];
     var a = (tr.life / tr.maxLife) * 0.35;
@@ -573,14 +562,12 @@ function render(){
     ctx.fill();
   }
 
-  // Игрок
   if(G.state !== "dead"){
     drawPlayer();
   }
 
   ctx.restore();
 
-  // Частицы
   for(var i=0;i<G.particles.length;i++){
     var p = G.particles[i];
     var a = p.life / p.maxLife;
@@ -588,7 +575,6 @@ function render(){
     ctx.fillRect(p.x, p.y - camY, (p.size || 3), (p.size || 3));
   }
 
-  // Вспышка
   if(G.flashTimer > 0){
     var a = clamp(G.flashTimer * 0.5, 0, 0.5);
     ctx.fillStyle = withA(G.flashColor, a);
@@ -606,11 +592,9 @@ function drawPlayer(){
   var headX = p.x;
   var headY = p.y;
 
-  // Тело
   ctx.fillStyle = sk.color;
   ctx.fillRect(p.x - bodyW/2, p.y + headR * 0.9, bodyW, bodyH);
 
-  // Руки
   var swing = Math.sin(p.anim * 5) * 14;
   ctx.strokeStyle = sk.color;
   ctx.lineWidth = 4;
@@ -624,7 +608,6 @@ function drawPlayer(){
   ctx.lineTo(p.x + bodyW/2 + 8, p.y + headR * 1.5 - swing);
   ctx.stroke();
 
-  // Ноги
   ctx.beginPath();
   ctx.moveTo(p.x - 4, p.y + headR * 0.9 + bodyH);
   ctx.lineTo(p.x - 4 - swing * 0.5, p.y + headR * 0.9 + bodyH + 12);
@@ -634,13 +617,11 @@ function drawPlayer(){
   ctx.lineTo(p.x + 4 + swing * 0.5, p.y + headR * 0.9 + bodyH + 12);
   ctx.stroke();
 
-  // Голова
   ctx.fillStyle = sk.color;
   ctx.beginPath();
   ctx.arc(headX, headY, headR, 0, 6.283);
   ctx.fill();
 
-  // Уши
   ctx.beginPath();
   ctx.moveTo(headX - headR * 0.7, headY - headR * 0.5);
   ctx.lineTo(headX - headR * 0.5, headY - headR * 1.7);
@@ -652,7 +633,6 @@ function drawPlayer(){
   ctx.lineTo(headX + headR * 0.1, headY - headR * 0.8);
   ctx.fill();
 
-  // Глаза
   ctx.fillStyle = "#fff";
   ctx.beginPath(); ctx.arc(headX - headR * 0.35, headY - headR * 0.15, headR * 0.3, 0, 6.283); ctx.fill();
   ctx.beginPath(); ctx.arc(headX + headR * 0.35, headY - headR * 0.15, headR * 0.3, 0, 6.283); ctx.fill();
@@ -663,9 +643,18 @@ function drawPlayer(){
 }
 
 /* ═══════════ ЦИКЛ ═══════════ */
+/* ⚡ ОПТИМИЗАЦИЯ: ограничение 60 FPS + RAF в начале (защита от пропусков) */
+var _lastFrame = 0;
 function loop(now){
-  var dt = Math.min((now - G.lastTime) / 1000, 0.05);
+  requestAnimationFrame(loop);
+
+  // Пропускаем кадры чаще, чем 60 FPS
+  if(now - _lastFrame < 16.67) return;
+
+  var dt = Math.min((now - _lastFrame) / 1000, 0.05);
+  _lastFrame = now;
   G.lastTime = now;
+
   if(G.state === "playing"){
     updatePlayer(dt);
     updateWorld(dt);
@@ -678,7 +667,6 @@ function loop(now){
     updateParticles(dt);
     render();
   }
-  requestAnimationFrame(loop);
 }
 
 /* ═══════════ UI ═══════════ */
@@ -771,7 +759,6 @@ function setupGameInput(){
   });
   window.addEventListener("keyup", function(e){ G.keys[e.key] = false; });
 
-  // Преобразуем экранные координаты в игровые (0..480)
   function screenToGameX(clientX){
     var rect = cv.getBoundingClientRect();
     return (clientX - rect.left) / rect.width * VIRTUAL_W;
@@ -816,7 +803,6 @@ function bootstrap(){
   setupGameInput();
   updateMenuStats();
 
-  // Стартовое состояние — игрок по центру
   G.player.x = VIRTUAL_W / 2;
   G.player.y = VIRTUAL_H * 0.65;
   G.camY = G.player.y - VIRTUAL_H * 0.55;
@@ -832,6 +818,7 @@ function bootstrap(){
   }, 1000);
 
   G.lastTime = performance.now();
+  _lastFrame = G.lastTime;
   requestAnimationFrame(loop);
 
   document.addEventListener("click", ensureAudio, { once:true });

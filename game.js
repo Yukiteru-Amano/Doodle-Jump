@@ -2,17 +2,17 @@
 
 /* ═══════════════════════════════════════════════════════════
    NEON JUMP — VK + OK Mini Apps Edition
+   С fallback-рекламой (OK-совместимо)
    ═══════════════════════════════════════════════════════════ */
 
 /* ═══════════ VK BRIDGE + ОПРЕДЕЛЕНИЕ ПЛАТФОРМЫ ═══════════ */
-let PLATFORM = "unknown";   // "vk" | "ok" | "unknown"
+let PLATFORM = "unknown";
 let vkReady = false;
 
 if (typeof vkBridge !== "undefined") {
   vkBridge.send("VKWebAppInit")
     .then(() => {
       vkReady = true;
-      // Определяем платформу по URL
       const host = window.location.hostname;
       if (host.indexOf("ok.ru") !== -1 || host.indexOf("odnoklassniki") !== -1) {
         PLATFORM = "ok";
@@ -24,7 +24,7 @@ if (typeof vkBridge !== "undefined") {
     .catch(e => console.warn("[VK] init failed", e));
 }
 
-/* ═══════════ ФИКСИРОВАННЫЕ РАЗМЕРЫ ИГРЫ ═══════════ */
+/* ═══════════ ФИКСИРОВАННЫЕ РАЗМЕРЫ ═══════════ */
 var VIRTUAL_W = 480;
 var VIRTUAL_H = 800;
 var GRAVITY = 1900;
@@ -276,126 +276,20 @@ function renderShop(){
     card.className = "skin-card";
     card.innerHTML = '<div class="emoji">' + item.icon + '</div><div class="info"><div class="name">' + item.name + '</div>' + (item.price ? '<div class="price">' + item.price + '</div>' : '<div class="status">СМОТРЕТЬ РЕКЛАМУ</div>') + '</div>';
     card.onclick = function(){
-      if(item.id === "ad_bonus"){ showRewardedAd(function(){ 
-        G.coins += 100; toast("+100 монет"); saveGame(); updateMenuStats();
-      }); return; }
+      if(item.id === "ad_bonus"){
+        showRewardedAd(function(){
+          G.coins += 100;
+          toast("+100 монет");
+          saveGame();
+          updateMenuStats();
+        });
+        return;
+      }
       toast("Функция в разработке");
     };
     list.appendChild(card);
   });
 }
-
-/* ═══════════════════════════════════════════════════════════
-   ⚡ УНИВЕРСАЛЬНАЯ РЕКЛАМА — VK + OK
-   ═══════════════════════════════════════════════════════════
-
-   Реклама в VK и OK работает через один и тот же VK Bridge:
-   - VKWebAppShowNativeAds с ad_format:"reward"       — за вознаграждение
-   - VKWebAppShowNativeAds с ad_format:"interstitial" — межстраничная
-
-   Правила:
-   1. Кулдаун минимум 60 секунд между показами (иначе бан)
-   2. Interstitial — только после действия пользователя (клик по кнопке)
-   3. Reward — можно по кнопке в любой момент
-   4. Всегда обрабатывать onError — если реклама не загрузилась
-
-   Для OK Games дополнительно:
-   - Реклама показывается ТОЛЬКО в iframe ok.ru
-   - Интерстишл идёт через тот же API
-   - Если ты зарегистрирован в OK Games через VK Bridge — код идентичен
-*/
-
-let adBusy = false;
-let lastAdTime = Date.now();
-const AD_COOLDOWN = 65000;   // 65 секунд
-
-/**
- * Проверяет — можно ли показать рекламу сейчас
- */
-function canShowAd(){
-  if(!vkReady) return false;
-  if(adBusy) return false;
-  if(Date.now() - lastAdTime < AD_COOLDOWN) return false;
-  return true;
-}
-
-/**
- * Реклама за вознаграждение.
- * @param onReward — колбэк, который вызовется ТОЛЬКО если пользователь досмотрел
- * @param onFail   — колбэк, если рекламы нет / ошибка
- */
-function showRewardedAd(onReward, onFail){
-  // Если VK Bridge не готов — сразу фейлим
-  if(!vkReady){
-    if(onFail) onFail("no_bridge");
-    return;
-  }
-  if(adBusy) return;
-  if(Date.now() - lastAdTime < AD_COOLDOWN){
-    toast("Реклама временно недоступна");
-    if(onFail) onFail("cooldown");
-    return;
-  }
-
-  adBusy = true;
-  vkBridge.send("VKWebAppShowNativeAds", { ad_format: "reward" })
-    .then(function(data){
-      adBusy = false;
-      lastAdTime = Date.now();
-      // data.result === true, если реклама досмотрена
-      if(data && data.result){
-        if(onReward) onReward();
-      } else {
-        if(onFail) onFail("skipped");
-      }
-    })
-    .catch(function(err){
-      adBusy = false;
-      console.warn("[Ad reward] error:", err);
-      if(onFail) onFail("error");
-    });
-}
-
-/**
- * Межстраничная реклама (interstitial).
- * Показывается ПОСЛЕ действия пользователя: клик по кнопке, game over, возврат в меню.
- */
-function showInterstitialAd(onDone){
-  // Если рекламы пока нельзя — просто продолжаем
-  if(!canShowAd()){
-    if(onDone) onDone();
-    return;
-  }
-
-  adBusy = true;
-  vkBridge.send("VKWebAppShowNativeAds", { ad_format: "interstitial" })
-    .then(function(){
-      adBusy = false;
-      lastAdTime = Date.now();
-      if(onDone) onDone();
-    })
-    .catch(function(err){
-      adBusy = false;
-      console.warn("[Ad interstitial] error:", err);
-      // Всё равно продолжаем — юзер не должен страдать от ошибки рекламы
-      if(onDone) onDone();
-    });
-}
-
-/* Обёртка для совместимости со старым кодом */
-function showAd(){
-  showRewardedAd(function(){
-    G.coins += 100;
-    toast("+100 монет");
-    saveGame();
-    updateMenuStats();
-  }, function(reason){
-    if(reason === "cooldown") toast("Реклама временно недоступна");
-    else if(reason === "error") toast("Реклама не загрузилась");
-    else toast("Пропущено — награды нет");
-  });
-}
-
 function renderAchievements(){
   var list = $("ach-list");
   list.innerHTML = "";
@@ -433,6 +327,109 @@ function toast(text){
   t.classList.add("on");
   clearTimeout(toast._t);
   toast._t = setTimeout(function(){ t.classList.remove("on"); }, 2000);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ⚡ РЕКЛАМА — VK + OK с fallback
+
+   Логика:
+   - Пытаемся показать рекламу через VK Bridge
+   - Если получилось — игрок смотрит, получает награду
+   - Если НЕТ (ошибка / кулдаун / OK не поддерживает) —
+     всё равно даём награду, чтобы игрок не блокировался
+   ═══════════════════════════════════════════════════════════ */
+
+let adBusy = false;
+let lastAdTime = Date.now();
+const AD_COOLDOWN = 65000;
+
+/**
+ * Показывает rewarded-рекламу.
+ * ВСЕГДА вызывает onReward, даже если рекламы нет —
+ * чтобы игрок не блокировался в OK.
+ */
+function showRewardedAd(onReward, onFail){
+  // VK Bridge не готов — даём награду
+  if(!vkReady){
+    console.log("[Ad] Bridge not ready, free reward");
+    if(onReward) onReward();
+    return;
+  }
+  if(adBusy) return;
+
+  // Кулдаун ещё идёт — тоже даём награду
+  if(Date.now() - lastAdTime < AD_COOLDOWN){
+    console.log("[Ad] Cooldown, free reward");
+    if(onReward) onReward();
+    return;
+  }
+
+  adBusy = true;
+  vkBridge.send("VKWebAppShowNativeAds", { ad_format: "reward" })
+    .then(function(data){
+      adBusy = false;
+      lastAdTime = Date.now();
+      if(data && data.result){
+        // Реклама досмотрена — награда
+        if(onReward) onReward();
+      } else {
+        // Пропущена — но всё равно даём награду
+        // (в OK реклама не работает, там всегда false)
+        console.log("[Ad] Not watched, giving free reward");
+        if(onReward) onReward();
+      }
+    })
+    .catch(function(err){
+      adBusy = false;
+      // Ошибка (OK, нет сети, блокировщик) — даём награду
+      console.warn("[Ad] Error, giving free reward:", err);
+      if(onReward) onReward();
+    });
+}
+
+/**
+ * Показывает interstitial-рекламу (межстраничную).
+ * Вызывается между партиями / при возврате в меню.
+ * Работает безопасно — если рекламы нет, просто продолжает.
+ */
+function showInterstitialAd(onDone){
+  // Если VK Bridge не готов — сразу продолжаем
+  if(!vkReady){
+    if(onDone) onDone();
+    return;
+  }
+  if(adBusy){
+    if(onDone) onDone();
+    return;
+  }
+  // Кулдаун — пропускаем без показа
+  if(Date.now() - lastAdTime < AD_COOLDOWN){
+    if(onDone) onDone();
+    return;
+  }
+
+  adBusy = true;
+  vkBridge.send("VKWebAppShowNativeAds", { ad_format: "interstitial" })
+    .then(function(){
+      adBusy = false;
+      lastAdTime = Date.now();
+      if(onDone) onDone();
+    })
+    .catch(function(err){
+      adBusy = false;
+      console.warn("[Ad interstitial] error:", err);
+      if(onDone) onDone();
+    });
+}
+
+/* Совместимость со старым названием showAd */
+function showAd(){
+  showRewardedAd(function(){
+    G.coins += 100;
+    toast("+100 монет");
+    saveGame();
+    updateMenuStats();
+  });
 }
 
 /* ═══════════ ИГРА ═══════════ */
@@ -800,7 +797,6 @@ function bindUI(){
   $("btn-pause-restart").onclick = function(){ startGame(); };
   $("btn-pause-menu").onclick = function(){
     G.state = "menu"; showHUD(false); updateMenuStats();
-    // Interstitial при возврате в меню (после действия пользователя)
     showInterstitialAd(function(){ showScreen("menu"); });
   };
   $("btn-pause-settings").onclick = function(){ openSettings("pause-menu"); };
@@ -831,22 +827,27 @@ function bindUI(){
     }
   };
 
-  // ⚡ РЕКЛАМА — кнопки
-  // Продолжить за рекламу — REWARD (юзер точно хочет награду)
+  // Продолжить за рекламу — REWARD
   $("btn-revive").onclick = function(){
-    showRewardedAd(
-      function(){ hideAllScreens(); startGame(); },
-      function(){ toast("Реклама недоступна — начни заново"); }
-    );
+    showRewardedAd(function(){
+      hideAllScreens();
+      startGame();
+    });
   };
 
+  // Играть снова — INTERSTITIAL между партиями
   $("btn-restart").onclick = function(){
-    // Interstitial между партиями (после действия пользователя)
-    showInterstitialAd(function(){ hideAllScreens(); startGame(); });
+    showInterstitialAd(function(){
+      hideAllScreens();
+      startGame();
+    });
   };
 
+  // Главное меню — INTERSTITIAL при выходе
   $("btn-menu").onclick = function(){
-    G.state = "menu"; showHUD(false); updateMenuStats();
+    G.state = "menu";
+    showHUD(false);
+    updateMenuStats();
     showInterstitialAd(function(){ showScreen("menu"); });
   };
 }
